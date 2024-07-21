@@ -216,3 +216,5 @@ if __name__ == '__main__':
     )
 
     trainer.run(EPOCHS=10)
+
+    torch.save(trainer.model.state_dict(), "tripletnet_state_dict.pth")
