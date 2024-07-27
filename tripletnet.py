@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 
@@ -66,7 +67,7 @@ class TripletNet(nn.Module):
     def __init__(self):
         super().__init__() 
 
-        self.main = nn.Sequential(
+        self.representation_encoder = nn.Sequential(
             nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
             nn.GELU(),
@@ -79,12 +80,20 @@ class TripletNet(nn.Module):
 
             nn.Linear(7*7*32, 16),
             nn.GELU(),
-
-            nn.Linear(16, 2),
         )
 
+        self.manipulable_encoder = nn.Sequential(
+            nn.Linear(16, 2)
+        )
+
+        self.manipulable_decoder = nn.Sequential(
+            nn.Linear(2, 16),
+            nn.GELU()
+        )
+        
+
     def forward(self, x):
-        return self.main(x)
+        return self.representation_encoder(x)
 
 class Trainer:
 
@@ -111,6 +120,7 @@ class Trainer:
         self.model.train()
         
         avg_loss = 0
+        avg_reconstruction_loss = 0
 
         for (anchor, _), (positive, _), (negative, _) in tqdm(self.trainloader):
             anchor = anchor.to(self.device)
@@ -123,13 +133,19 @@ class Trainer:
 
             loss = self.criterion(anchor_pred, positive_pred, negative_pred)
 
+            code_pred = self.model.manipulable_encoder(anchor_pred)
+            reconstruction = self.model.manipulable_decoder(code_pred)
+            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred)
+
             self.optim.zero_grad()
-            loss.backward()
+            loss.backward(retain_graph=True)
+            reconstruction_loss.backward()
             self.optim.step()
 
             avg_loss += loss.item()
+            avg_reconstruction_loss += reconstruction_loss.item()
 
-        return avg_loss / len(self.trainloader)
+        return avg_loss / len(self.trainloader), avg_reconstruction_loss / len(self.trainloader)
 
     @torch.no_grad()
     def valid_epoch(self, epoch):
@@ -144,6 +160,7 @@ class Trainer:
             })
 
         avg_loss = 0
+        avg_reconstruction_loss = 0
 
         for (anchor, anchor_label), (positive, _), (negative, _) in tqdm(self.validloader):
             anchor = anchor.to(self.device)
@@ -155,13 +172,19 @@ class Trainer:
             negative_pred = self.model(negative)
 
             loss = self.criterion(anchor_pred, positive_pred, negative_pred)
+            
+            code_pred = self.model.manipulable_encoder(anchor_pred)
+            reconstruction = self.model.manipulable_decoder(code_pred)
+
+            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred)
 
             avg_loss += loss.item()
+            avg_reconstruction_loss += reconstruction_loss.item()
 
             if self.visualization_plot_path is not None:
                 for i in range(len(anchor)):
                     label = anchor_label[i]
-                    pred = anchor_pred[i]
+                    pred = code_pred[i]
 
                     codes[label]["x"].append(pred[0].item())
                     codes[label]["y"].append(pred[1].item())
@@ -174,16 +197,16 @@ class Trainer:
             plt.savefig(os.path.join(self.visualization_plot_path, str(epoch+1)+".jpg"))
             plt.clf()
 
-        return avg_loss / len(self.validloader)
+        return avg_loss / len(self.validloader), avg_reconstruction_loss / len(self.trainloader)
 
     
     def run(self, EPOCHS):
 
         for epoch in range(EPOCHS):
-            train_loss = self.train_epoch()
-            valid_loss = self.valid_epoch(epoch)
+            train_tripletloss, train_rec_loss = self.train_epoch()
+            valid_tripletloss, valid_rec_loss = self.valid_epoch(epoch)
 
-            print(f"EPOCH: {epoch+1}/{EPOCHS}, train_loss: %.4f, valid_loss: %.4f"%(train_loss, valid_loss))
+            print(f"EPOCH: {epoch+1}/{EPOCHS}, train_loss: (%.4f, %.4f), valid_loss: (%.4f, %.4f)"%(train_tripletloss, train_rec_loss, valid_tripletloss, valid_rec_loss))
             
 
 if __name__ == '__main__':
@@ -217,4 +240,4 @@ if __name__ == '__main__':
 
     trainer.run(EPOCHS=10)
 
-    torch.save(trainer.model.state_dict(), "tripletnet_state_dict.pth")
+    torch.save(trainer.model.state_dict(), "mnist_tripletnet_state_dict.pth")
