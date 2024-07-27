@@ -83,12 +83,25 @@ class TripletNet(nn.Module):
         )
 
         self.manipulable_encoder = nn.Sequential(
-            nn.Linear(16, 2)
+            nn.Linear(16, 16),
+            nn.LeakyReLU(0.2),
+
+            nn.Linear(16, 8),
+            nn.LeakyReLU(0.2),
+
+            nn.Linear(8, 2),
+            nn.LeakyReLU(0.2)
         )
 
         self.manipulable_decoder = nn.Sequential(
-            nn.Linear(2, 16),
-            nn.GELU()
+            nn.Linear(2, 8),
+            nn.LeakyReLU(0.2),
+            
+            nn.Linear(8, 16),
+            nn.LeakyReLU(0.2),
+
+            nn.Linear(16, 16),
+            nn.LeakyReLU(0.2)
         )
         
 
@@ -133,12 +146,15 @@ class Trainer:
 
             loss = self.criterion(anchor_pred, positive_pred, negative_pred)
 
-            code_pred = self.model.manipulable_encoder(anchor_pred)
+            self.optim.zero_grad()
+            loss.backward()
+            self.optim.step()
+
+            code_pred = self.model.manipulable_encoder(anchor_pred.detach())
             reconstruction = self.model.manipulable_decoder(code_pred)
-            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred)
+            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred.detach())
 
             self.optim.zero_grad()
-            loss.backward(retain_graph=True)
             reconstruction_loss.backward()
             self.optim.step()
 
