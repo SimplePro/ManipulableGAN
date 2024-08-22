@@ -5,7 +5,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 
 import torchvision
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, FashionMNIST
 from torchvision import transforms
 from torchvision.utils import make_grid
 
@@ -118,16 +118,23 @@ class TripletNet(nn.Module):
         self.representation_encoder = nn.Sequential(
             nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            nn.GELU(),
+            nn.BatchNorm2d(16),
+            nn.Tanh(),
 
             nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            nn.GELU(),
+            nn.BatchNorm2d(32),
+            nn.Tanh(),
 
-            nn.Flatten(), # (7*7*32)
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.Tanh(),
 
-            nn.Linear(7*7*32, 16),
-            nn.GELU(),
+            nn.Flatten(), # (4*4*64)
+
+            nn.Linear(4*4*64, 16),
+            # nn.Tanh(0.2),
         )
 
     def forward(self, x):
@@ -139,6 +146,15 @@ class ManipulableAutoEncoder(nn.Module):
         super().__init__()
 
         self.manipulable_encoder = nn.Sequential(
+            nn.Linear(16, 16),
+            nn.LeakyReLU(0.2),
+
+            # nn.Linear(16, 16),
+            # nn.LeakyReLU(0.2),
+
+            # nn.Linear(16, 16),
+            # nn.LeakyReLU(0.2),
+
             nn.Linear(16, 16),
             nn.LeakyReLU(0.2),
 
@@ -154,6 +170,15 @@ class ManipulableAutoEncoder(nn.Module):
             nn.LeakyReLU(0.2),
             
             nn.Linear(8, 16),
+            nn.LeakyReLU(0.2),
+
+            # nn.Linear(16, 16),
+            # nn.LeakyReLU(0.2),
+
+            # nn.Linear(16, 16),
+            # nn.LeakyReLU(0.2),
+
+            nn.Linear(16, 16),
             nn.LeakyReLU(0.2),
 
             nn.Linear(16, 16),
@@ -187,7 +212,22 @@ class Resize(nn.Module):
     def forward(self, x):
         return F.interpolate(x, scale_factor=self.scale_factor)
     
+class WSConv2d(nn.Module):
+    
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+        super().__init__()
+        
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
+        self.bias = self.conv.bias
+        self.conv.bias = None
+        
+        self.scale = (2 / (in_channels * kernel_size ** 2)) ** 0.5
+        
+        nn.init.normal_(self.conv.weight)
+        nn.init.zeros_(self.bias)
 
+    def forward(self, x):
+        return self.conv(x * self.scale) + self.bias.view(1, self.bias.size(0), 1, 1)
 
 class Generator(nn.Module):
 
@@ -197,25 +237,33 @@ class Generator(nn.Module):
         # input shape: (16)
         self.main = nn.Sequential(
             nn.Linear(16, 7*7*32),
-            nn.GELU(),
+            nn.LeakyReLU(0.2),
 
             nn.Linear(7*7*32, 7*7*32),
-            nn.GELU(),
+            nn.LeakyReLU(0.2),
 
             Reshape(shape=(32, 7, 7)),
 
-            nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            # nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=4, stride=2, padding=1, bias=False),
+            WSConv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(16),
             Resize(scale_factor=2.0),
-            nn.GELU(),
+            # nn.GELU(),
+            nn.LeakyReLU(0.2),
 
-            nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
+            # nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=4, stride=2, padding=1, bias=False),
+            WSConv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
             Resize(scale_factor=2.0),
-            nn.GELU(),
+            nn.LeakyReLU(0.2),
 
-            nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, stride=1, padding=1),
-            nn.GELU(),
+            # nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=1, padding=1),
+            WSConv2d(in_channels=8, out_channels=4, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(4),
+            nn.LeakyReLU(0.2),
 
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=1, padding=1)
+            # nn.Conv2d(in_channels=4, out_channels=1, kernel_size=1, stride=1, padding=0)
+            WSConv2d(in_channels=4, out_channels=1, kernel_size=1, stride=1, padding=0)
             # nn.Sigmoid()
         )
 
@@ -231,18 +279,20 @@ class Discriminator(nn.Module):
 
         # input shape: (1, 28, 28)
         self.main = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=8, kernel_size=3, stride=1, padding=1),
+            # nn.Conv2d(in_channels=1, out_channels=8, kernel_size=3, stride=1, padding=1),
+            WSConv2d(in_channels=1, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1), # (8, 14, 14)
-            nn.GELU(),
+            nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            # nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            WSConv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1), # (16, 7, 7)
-            nn.GELU(),
+            nn.LeakyReLU(0.2, inplace=True),
 
             nn.Flatten(), # (16*7*7)
 
             nn.Linear(16*7*7, 16),
-            nn.GELU(),
+            nn.LeakyReLU(0.2, inplace=True),
 
             nn.Linear(16, 1),
             # nn.Tanh()
@@ -270,8 +320,9 @@ def gradient_penalty(D, real_samples, fake_samples, device):
 
 class Trainer:
 
-    def __init__(self, expr_name, trainset, validset, device="cuda", learning_rate=0.002, batch_size=64):
+    def __init__(self, expr_name, dataset_name, trainset, validset, device="cuda", learning_rate=0.002, batch_size=64):
         self.expr_name = expr_name
+        self.dataset_name = dataset_name
         self.device = device
         self.tripletnet = TripletNet().to(self.device)
         self.manipulable_ae = ManipulableAutoEncoder().to(self.device)
@@ -303,6 +354,7 @@ class Trainer:
 
     def train_epoch(self):
         self.tripletnet.train()
+        self.manipulable_ae.train()
         
         avg_triplet_loss = 0
         avg_reconstruction_loss = 0
@@ -324,19 +376,22 @@ class Trainer:
             triplet_loss = self.triplet_loss(anchor_pred, positive_pred, negative_pred)
 
             self.optim_triplet.zero_grad()
-            triplet_loss.backward()
+            (0.1 * triplet_loss).backward()
             self.optim_triplet.step()
 
             avg_triplet_loss += triplet_loss.item()
 
             # ------------------------- 2. Manipulable AutoEncoder -------------------------
 
-            code_pred = self.manipulable_ae.encode(anchor_pred.detach())
+            ### --------------------------- Inject Noise ------------------------
+            anchor_pred = self.tripletnet(anchor).detach()
+            # code_pred = self.manipulable_ae.encode(anchor_pred.detach() + torch.randn_like(anchor_pred) * 0.5)
+            code_pred = self.manipulable_ae.encode(anchor_pred)
             reconstruction = self.manipulable_ae.decode(code_pred)
-            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred.detach())
+            reconstruction_loss = F.mse_loss(reconstruction, anchor_pred)
 
             self.optim_manipulable.zero_grad()
-            reconstruction_loss.backward()
+            (10 * reconstruction_loss).backward()
             self.optim_manipulable.step()
 
             avg_reconstruction_loss += reconstruction_loss.item()
@@ -349,6 +404,11 @@ class Trainer:
 
                 code1 = self.tripletnet(anchor).detach() # (1, 16)
 
+                ### ---------------------- Inject Noise --------------------------
+                # noisy_code1 = torch.randn_like(code1) * 0.5 + code1
+
+                # fake = self.gen(noisy_code1)
+
                 fake = self.gen(code1)
 
                 disc_fake_pred = self.disc(fake)
@@ -358,13 +418,14 @@ class Trainer:
                 perceptual_loss = self.perceptual_loss(fake, anchor)
                 # mse_loss = F.mse_loss(fake, anchor)
 
+                loss = 10 * perceptual_loss + adversarial_loss
                 # loss = adversarial_loss + 10*((1-self.alpha) * perceptual_loss + (self.alpha) * mse_loss)
+                # loss = adversarial_loss + 10 * (perceptual_loss + mse_loss)
                 # loss = adversarial_loss + 10 * (perceptual_loss + 5 * mse_loss)
                 # loss = 5*adversarial_loss + 10*perceptual_loss
                 # loss *= 10
-                loss = adversarial_loss + 10 * perceptual_loss
-
                 # loss = adversarial_loss + 10 * perceptual_loss
+
 
                 self.optim_gen.zero_grad()
                 self.optim_triplet.zero_grad()
@@ -401,7 +462,6 @@ class Trainer:
             self.optim_disc.step()
 
             avg_disc_adversarial_loss += adversarial_loss.item()
-
         
         avg_triplet_loss /= len(self.trainloader)
         avg_reconstruction_loss /= len(self.trainloader)
@@ -463,12 +523,19 @@ class Trainer:
                 label = anchor_label[i]
                 pred = code_pred[i]
 
+                ## ----------------------- Inject Noise -------------------------
+                # codes[label]["x"].append(pred[0].item() + torch.randn(1).item() * 0.5)
+                # codes[label]["y"].append(pred[1].item() + torch.randn(1).item() * 0.5)
                 codes[label]["x"].append(pred[0].item())
                 codes[label]["y"].append(pred[1].item())
 
             # --------------------------------- 3. Generator ----------------------------------
             if i % 5 == 0:
                 code1 = self.tripletnet(anchor).detach()
+                ## ------------------------- Inject Noise ----------------------------
+                # noisy_code1 = torch.randn_like(code1) * 0.5 + code1
+                # fake = self.gen(noisy_code1).detach()
+
                 fake = self.gen(code1).detach()
             
                 perceptual_loss = self.perceptual_loss(fake, anchor)
@@ -499,14 +566,14 @@ class Trainer:
             plt.scatter(codes[i]["x"], codes[i]["y"], s=1, label=self.validset.class_info[i])
 
         plt.legend()
-        plt.savefig(os.path.join("results", self.expr_name, "2d_visualization", str(epoch+1)+".jpg"))
+        plt.savefig(os.path.join(f"{self.dataset_name}_results", self.expr_name, "2d_visualization", str(epoch+1)+".jpg"))
         plt.clf()
 
         grid = make_grid(fake.cpu(), normalize=True).permute(1, 2, 0)
         # print(type(grid))
 
         plt.imshow(grid)
-        plt.savefig(os.path.join("results", self.expr_name, "generation", str(epoch+1)+".jpg"))
+        plt.savefig(os.path.join(f"{self.dataset_name}_results", self.expr_name, "generation", str(epoch+1)+".jpg"))
         plt.clf()
     
         avg_triplet_loss /= len(self.validloader)
@@ -520,6 +587,25 @@ class Trainer:
     
     def run(self, EPOCHS):
 
+        train_loss = {
+            "triplet": [],
+            "rec": [],
+            "perceptual": [],
+            "mse": [],
+            "gen_adversarial": [],
+            "disc_adversarial": []
+        }
+        
+        
+        valid_loss = {
+            "triplet": [],
+            "rec": [],
+            "perceptual": [],
+            "mse": [],
+            "gen_adversarial": [],
+            "disc_adversarial": []
+        }
+
         for epoch in range(EPOCHS):
             print(f"EPOCH: {epoch+1}/{EPOCHS}, alpha: {self.alpha}")
             train_tripletloss, train_rec_loss, train_per_loss, train_mse_loss, train_gen_adv_loss, train_disc_adv_loss = self.train_epoch()
@@ -527,35 +613,89 @@ class Trainer:
 
             print(f"TRAIN_LOSS\n(triplet: %.4f, rec: %.4f, perceptual: %.4f, mse: %.4f, gen-adv: %.4f, disc-adv: %.4f)\nVALID_LOSS\n(triplet: %.4f, rec: %.4f, perceptual: %.4f, mse: %.4f, gen-adv: %.4f, disc-adv: %.4f)\n" 
                   %(train_tripletloss, train_rec_loss, train_per_loss, train_mse_loss, train_gen_adv_loss, train_disc_adv_loss, valid_tripletloss, valid_rec_loss, valid_per_loss, valid_mse_loss, valid_gen_adv_loss, valid_disc_adv_loss))
+
+            train_loss["triplet"].append(train_tripletloss)
+            train_loss["rec"].append(train_rec_loss)
+            train_loss["perceptual"].append(train_per_loss)
+            train_loss["mse"].append(train_mse_loss)
+            train_loss["gen_adversarial"].append(train_gen_adv_loss)
+            train_loss["disc_adversarial"].append(train_disc_adv_loss)
+
+            valid_loss["triplet"].append(valid_tripletloss)
+            valid_loss["rec"].append(valid_rec_loss)
+            valid_loss["perceptual"].append(valid_per_loss)
+            valid_loss["mse"].append(valid_mse_loss)
+            valid_loss["gen_adversarial"].append(valid_gen_adv_loss)
+            valid_loss["disc_adversarial"].append(valid_disc_adv_loss)
+
+            for key in list(train_loss.keys()):
+                plt.plot(range(len(train_loss[key])), train_loss[key], label=key)
             
+            plt.legend()
+            plt.title("train_loss")
+            plt.savefig(os.path.join(f"{self.dataset_name}_results", self.expr_name, "train_loss.png"))
+            plt.clf()
+            
+            for key in list(valid_loss.keys()):
+                plt.plot(range(len(valid_loss[key])), valid_loss[key], label=key)
+                
+            plt.legend()
+            plt.title("valid_loss")
+            plt.savefig(os.path.join(f"{self.dataset_name}_results", self.expr_name, "valid_loss.png"))
+            plt.clf()
+
 
 if __name__ == '__main__':
 
-    expr_name = "perceptual_wgan-gp"
+    expr_name = "gen_manipulable_ae_v4_perceptual_wgan-gp"
+    dataset = "mnist"
 
-    os.makedirs(os.path.join("results", expr_name, "2d_visualization"), exist_ok=True)
-    os.makedirs(os.path.join("results", expr_name, "generation"), exist_ok=True)
+    os.makedirs(os.path.join(f"{dataset}_results", expr_name, "2d_visualization"), exist_ok=True)
+    os.makedirs(os.path.join(f"{dataset}_results", expr_name, "generation"), exist_ok=True)
 
-    trainset = TripletDataset(
-        dataset=MNIST(
-            root="./MNIST/images/",
-            train=True,
-            download=True,
-            transform=transforms.ToTensor()
+    if dataset == "mnist":
+        
+        trainset = TripletDataset(
+            dataset=MNIST(
+                root="./MNIST/images/",
+                train=True,
+                download=True,
+                transform=transforms.ToTensor()
+            )
         )
-    )
 
-    validset = TripletDataset(
-        dataset=MNIST(
-            root="./MNIST/images/",
-            train=False,
-            download=True,
-            transform=transforms.ToTensor()
+        validset = TripletDataset(
+            dataset=MNIST(
+                root="./MNIST/images/",
+                train=False,
+                download=True,
+                transform=transforms.ToTensor()
+            )
         )
-    )
+
+    elif dataset == "fashion_mnist":
+        trainset = TripletDataset(
+            dataset=FashionMNIST(
+                root="./FashionMNIST/images/",
+                train=True,
+                download=True,
+                transform=transforms.ToTensor()
+            )
+        )
+
+        validset = TripletDataset(
+            dataset=FashionMNIST(
+                root="./FashionMNIST/images/",
+                train=False,
+                download=True,
+                transform=transforms.ToTensor()
+            )
+        )
+
 
     trainer = Trainer(
         expr_name=expr_name,
+        dataset_name=dataset,
         trainset=trainset,
         validset=validset,
         device="cuda",
@@ -563,9 +703,9 @@ if __name__ == '__main__':
         batch_size=64,
     )
 
-    trainer.run(EPOCHS=100)
+    trainer.run(EPOCHS=200)
 
-    torch.save(trainer.tripletnet.state_dict(), f"results/{expr_name}/mnist_tripletnet_state_dict.pth")
-    torch.save(trainer.manipulable_ae.state_dict(), f"results/{expr_name}/mnist_manipulable_ae_state_dict.pth")
-    torch.save(trainer.gen.state_dict(), f"results/{expr_name}/mnist_gen_state_dict.pth")
-    torch.save(trainer.disc.state_dict(), f"results/{expr_name}/mnist_disc_state_dict.pth")
+    torch.save(trainer.tripletnet.state_dict(), f"{dataset}_results/{expr_name}/{dataset}_tripletnet_state_dict.pth")
+    torch.save(trainer.manipulable_ae.state_dict(), f"{dataset}_results/{expr_name}/{dataset}_manipulable_ae_state_dict.pth")
+    torch.save(trainer.gen.state_dict(), f"{dataset}_results/{expr_name}/{dataset}_gen_state_dict.pth")
+    torch.save(trainer.disc.state_dict(), f"{dataset}_results/{expr_name}/{dataset}_disc_state_dict.pth")
