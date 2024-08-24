@@ -133,7 +133,7 @@ class TripletNet(nn.Module):
 
             nn.Flatten(), # (4*4*64)
 
-            nn.Linear(4*4*64, 16),
+            nn.Linear(4*4*64, 64),
             # nn.Tanh(0.2),
         )
 
@@ -146,7 +146,7 @@ class ManipulableAutoEncoder(nn.Module):
         super().__init__()
 
         self.manipulable_encoder = nn.Sequential(
-            nn.Linear(16, 16),
+            nn.Linear(64, 64),
             nn.LeakyReLU(0.2),
 
             # nn.Linear(16, 16),
@@ -155,21 +155,21 @@ class ManipulableAutoEncoder(nn.Module):
             # nn.Linear(16, 16),
             # nn.LeakyReLU(0.2),
 
-            nn.Linear(16, 16),
+            nn.Linear(64, 32),
             nn.LeakyReLU(0.2),
 
-            nn.Linear(16, 8),
+            nn.Linear(32, 16),
             nn.LeakyReLU(0.2),
 
-            nn.Linear(8, 2),
+            nn.Linear(16, 2),
             nn.LeakyReLU(0.2)
         )
 
         self.manipulable_decoder = nn.Sequential(
-            nn.Linear(2, 8),
+            nn.Linear(2, 16),
             nn.LeakyReLU(0.2),
             
-            nn.Linear(8, 16),
+            nn.Linear(16, 32),
             nn.LeakyReLU(0.2),
 
             # nn.Linear(16, 16),
@@ -178,10 +178,10 @@ class ManipulableAutoEncoder(nn.Module):
             # nn.Linear(16, 16),
             # nn.LeakyReLU(0.2),
 
-            nn.Linear(16, 16),
+            nn.Linear(32, 64),
             nn.LeakyReLU(0.2),
 
-            nn.Linear(16, 16),
+            nn.Linear(64, 64),
             nn.LeakyReLU(0.2)
         )
 
@@ -234,9 +234,9 @@ class Generator(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # input shape: (16)
+        # input shape: (64)
         self.main = nn.Sequential(
-            nn.Linear(16, 7*7*32),
+            nn.Linear(64, 7*7*32),
             nn.LeakyReLU(0.2),
 
             nn.Linear(7*7*32, 7*7*32),
@@ -647,7 +647,7 @@ class Trainer:
 
 if __name__ == '__main__':
 
-    expr_name = "gen_manipulable_ae_v4_perceptual_wgan-gp"
+    expr_name = "gen_manipulable_ae_v5_perceptual_wgan-gp"
     dataset = "mnist"
 
     os.makedirs(os.path.join(f"{dataset}_results", expr_name, "2d_visualization"), exist_ok=True)
